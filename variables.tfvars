@@ -24,13 +24,9 @@ cluster-name               = "eks-cluster"
 endpoint-private-access    = true
 endpoint-public-access     = true
 ondemand_instance_types    = ["t3.medium"]
-spot_instance_types        = ["t3.medium", "t3.large", "t3a.medium"]
 desired_capacity_on_demand = "1"
 min_capacity_on_demand     = "1"
 max_capacity_on_demand     = "5"
-desired_capacity_spot      = "1"
-min_capacity_spot          = "1"
-max_capacity_spot          = "5"
 addons = [
   {
     name = "vpc-cni"

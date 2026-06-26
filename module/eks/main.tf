@@ -120,8 +120,7 @@ resource "aws_eks_addon" "eks-addons" {
   }
 
   depends_on = [
-    aws_eks_node_group.ondemand-node,
-    aws_eks_node_group.spot-node
+    aws_eks_node_group.ondemand-node
   ]
 }
 
@@ -140,35 +139,13 @@ resource "aws_eks_addon" "ebs-csi" {
   }
 
   depends_on = [
-    aws_eks_node_group.ondemand-node,
-    aws_eks_node_group.spot-node
+    aws_eks_node_group.ondemand-node
   ]
 }
 
 # NodeGroups
 resource "aws_launch_template" "ondemand" {
   name_prefix = "${var.cluster-name}-ondemand-"
-
-  metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 1
-  }
-
-  block_device_mappings {
-    device_name = "/dev/xvda"
-    ebs {
-      volume_size           = 50
-      volume_type           = "gp3"
-      encrypted             = true
-      kms_key_id            = aws_kms_key.eks.arn
-      delete_on_termination = true
-    }
-  }
-}
-
-resource "aws_launch_template" "spot" {
-  name_prefix = "${var.cluster-name}-spot-"
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -215,41 +192,6 @@ resource "aws_eks_node_group" "ondemand-node" {
 
   tags = {
     "Name" = "${var.cluster-name}-ondemand-nodes"
-  }
-
-  depends_on = [aws_eks_cluster.eks]
-}
-
-resource "aws_eks_node_group" "spot-node" {
-  cluster_name    = aws_eks_cluster.eks[0].name
-  node_group_name = "${var.cluster-name}-spot-nodes"
-  node_role_arn   = aws_iam_role.eks-nodegroup-role[0].arn
-  subnet_ids      = data.aws_subnets.private_subnets.ids
-  instance_types  = var.spot_instance_types
-  capacity_type   = "SPOT"
-
-  scaling_config {
-    desired_size = var.desired_capacity_spot
-    min_size     = var.min_capacity_spot
-    max_size     = var.max_capacity_spot
-  }
-
-  launch_template {
-    id      = aws_launch_template.spot.id
-    version = aws_launch_template.spot.latest_version
-  }
-
-  update_config {
-    max_unavailable = 1
-  }
-
-  labels = {
-    type      = "spot"
-    lifecycle = "spot"
-  }
-
-  tags = {
-    "Name" = "${var.cluster-name}-spot-nodes"
   }
 
   depends_on = [aws_eks_cluster.eks]
