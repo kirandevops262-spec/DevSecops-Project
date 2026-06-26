@@ -62,7 +62,7 @@ resource "aws_iam_role_policy_attachment" "eks-AmazonEC2ContainerRegistryReadOnl
   role       = aws_iam_role.eks-nodegroup-role[count.index].name
 }
 
-# EBS CSI Driver IAM Role
+# EBS CSI Driver IAM Role — uses node role directly (no OIDC)
 resource "aws_iam_role" "ebs_csi_driver" {
   name = "${local.cluster_name}-ebs-csi-driver-role"
 
@@ -71,15 +71,9 @@ resource "aws_iam_role" "ebs_csi_driver" {
     Statement = [{
       Effect = "Allow"
       Principal = {
-        Federated = aws_iam_openid_connect_provider.eks-oidc.arn
+        Service = "ec2.amazonaws.com"
       }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${replace(aws_iam_openid_connect_provider.eks-oidc.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
-          "${replace(aws_iam_openid_connect_provider.eks-oidc.url, "https://", "")}:aud" = "sts.amazonaws.com"
-        }
-      }
+      Action = "sts:AssumeRole"
     }]
   })
 }
@@ -189,28 +183,4 @@ resource "aws_iam_policy" "ebs_csi_driver" {
 resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
   policy_arn = aws_iam_policy.ebs_csi_driver.arn
   role       = aws_iam_role.ebs_csi_driver.name
-}
-
-# OIDC
-resource "aws_iam_role" "eks_oidc" {
-  assume_role_policy = data.aws_iam_policy_document.eks_oidc_assume_role_policy.json
-  name               = "eks-oidc"
-}
-
-resource "aws_iam_policy" "eks-oidc-policy" {
-  name = "eks-oidc-s3-readonly-policy"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action   = ["s3:ListAllMyBuckets", "s3:GetBucketLocation"]
-      Effect   = "Allow"
-      Resource = "arn:aws:s3:::*"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "eks-oidc-policy-attach" {
-  role       = aws_iam_role.eks_oidc.name
-  policy_arn = aws_iam_policy.eks-oidc-policy.arn
 }
