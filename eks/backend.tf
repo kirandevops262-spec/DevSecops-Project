@@ -1,11 +1,17 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.9.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.49.0"
+      version = "~> 5.80.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
+
   backend "s3" {
     bucket         = "dev-tarak01-tf-bucket-terraform"
     region         = "us-east-1"
@@ -16,6 +22,13 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws-region
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project     = "DevSecOps-EKS"
+      ManagedBy   = "Terraform"
+      Environment = var.env
+    }
+  }
 }
- 

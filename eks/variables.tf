@@ -1,45 +1,68 @@
-variable "aws-region" {}
-variable "env" {}
-variable "cluster-name" {}
-variable "vpc-cidr-block" {}
-variable "vpc-name" {}
-variable "igw-name" {}
-variable "pub-subnet-count" {}
-variable "pub-cidr-block" {
-  type = list(string)
+variable "env" {
+  type        = string
+  description = "Environment name"
 }
-variable "pub-availability-zone" {
-  type = list(string)
-}
-variable "pub-sub-name" {}
-variable "pri-subnet-count" {}
-variable "pri-cidr-block" {
-  type = list(string)
-}
-variable "pri-availability-zone" {
-  type = list(string)
-}
-variable "pri-sub-name" {}
-variable "public-rt-name" {}
-variable "private-rt-name" {}
-variable "eip-name" {}
-variable "ngw-name" {}
-variable "eks-sg" {}
 
+variable "aws_region" {
+  type        = string
+  description = "AWS region"
+}
 
-# EKS
-variable "is-eks-cluster-enabled" {}
-variable "cluster-version" {}
-variable "endpoint-private-access" {}
-variable "endpoint-public-access" {}
+variable "vpc_name" {
+  type        = string
+  description = "VPC name suffix"
+}
+
+variable "eks_sg" {
+  type        = string
+  description = "EKS security group name"
+}
+
+variable "cluster_name" {
+  type        = string
+  description = "EKS cluster name suffix"
+}
+
+variable "cluster_version" {
+  type        = string
+  description = "Kubernetes version"
+}
+
 variable "ondemand_instance_types" {
-  default = ["t3.medium"]
+  type        = list(string)
+  default     = ["t3.medium"]
+  description = "On-demand node instance types"
 }
-variable "desired_capacity_on_demand" {}
-variable "min_capacity_on_demand" {}
-variable "max_capacity_on_demand" {}
+
+variable "desired_capacity" {
+  type        = number
+  default     = 2
+  description = "Desired node count"
+}
+
+variable "min_capacity" {
+  type        = number
+  default     = 1
+  description = "Minimum node count"
+}
+
+variable "max_capacity" {
+  type        = number
+  default     = 5
+  description = "Maximum node count"
+}
+
+variable "node_volume_size" {
+  type        = number
+  default     = 50
+  description = "Node EBS volume size in GB"
+}
+
 variable "addons" {
   type = list(object({
-    name = string
+    name    = string
+    version = optional(string)
   }))
+  default     = []
+  description = "EKS managed addons"
 }

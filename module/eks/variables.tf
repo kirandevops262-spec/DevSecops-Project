@@ -1,49 +1,73 @@
-variable "vpc-name" {}
-variable "env" {}
-variable "aws-region" {}
-variable "cluster-name" {}
-variable "igw-name" {}
-variable "pub-subnet-count" {}
-variable "pub-cidr-block" {
-  type = list(string)
-}
-variable "pub-availability-zone" {
-  type = list(string)
-}
-variable "pub-sub-name" {}
-variable "pri-subnet-count" {}
-variable "pri-cidr-block" {
-  type = list(string)
-}
-variable "pri-availability-zone" {
-  type = list(string)
-}
-variable "pri-sub-name" {}
-variable "public-rt-name" {}
-variable "private-rt-name" {}
-variable "eip-name" {}
-variable "ngw-name" {}
-variable "eks-sg" {}
-
-#IAM
-variable "is_eks_role_enabled" {
-  type = bool
-}
-variable "is_eks_nodegroup_role_enabled" {
-  type = bool
+# ─── General ──────────────────────────────────────────────────────────────────
+variable "env" {
+  type        = string
+  description = "Environment name (prod, staging, dev)"
 }
 
-# EKS
-variable "is-eks-cluster-enabled" {}
-variable "cluster-version" {}
-variable "endpoint-private-access" {}
-variable "endpoint-public-access" {}
+variable "aws_region" {
+  type        = string
+  description = "AWS region"
+}
+
+# ─── Network ──────────────────────────────────────────────────────────────────
+variable "vpc_name" {
+  type        = string
+  description = "Name tag of the VPC to deploy EKS into"
+}
+
+variable "eks_sg" {
+  type        = string
+  description = "Name of the EKS cluster security group"
+}
+
+# ─── EKS Cluster ──────────────────────────────────────────────────────────────
+variable "cluster_name" {
+  type        = string
+  description = "EKS cluster name"
+}
+
+variable "cluster_version" {
+  type        = string
+  description = "Kubernetes version"
+}
+
+# ─── Node Group ───────────────────────────────────────────────────────────────
+variable "ondemand_instance_types" {
+  type        = list(string)
+  description = "EC2 instance types for on-demand node group"
+  default     = ["t3.medium"]
+}
+
+variable "desired_capacity" {
+  type        = number
+  description = "Desired number of nodes"
+  default     = 2
+}
+
+variable "min_capacity" {
+  type        = number
+  description = "Minimum number of nodes"
+  default     = 1
+}
+
+variable "max_capacity" {
+  type        = number
+  description = "Maximum number of nodes"
+  default     = 5
+}
+
+variable "node_volume_size" {
+  type        = number
+  description = "Root EBS volume size in GB"
+  default     = 50
+}
+
+# ─── Addons ───────────────────────────────────────────────────────────────────
 variable "addons" {
   type = list(object({
-    name = string
+    name    = string
+    version = optional(string)
   }))
+  description = "List of EKS managed addons"
+  default     = []
 }
-variable "ondemand_instance_types" {}
-variable "desired_capacity_on_demand" {}
-variable "min_capacity_on_demand" {}
-variable "max_capacity_on_demand" {}

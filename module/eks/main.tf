@@ -1,7 +1,9 @@
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
+# ─── KMS Key for EKS Secrets + EBS ───────────────────────────────────────────
 resource "aws_kms_key" "eks" {
-  description             = "EKS secrets encryption key"
+  description             = "KMS key for EKS secrets encryption and EBS volumes"
   deletion_window_in_days = 30
   enable_key_rotation     = true
 
@@ -21,7 +23,7 @@ resource "aws_kms_key" "eks" {
         Sid    = "AllowEKSNodeGroupEBS"
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.eks-nodegroup-role[0].arn
+          AWS = aws_iam_role.node_group.arn
         }
         Action = [
           "kms:Encrypt",
@@ -37,7 +39,7 @@ resource "aws_kms_key" "eks" {
         Sid    = "AllowEKSClusterSecrets"
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.eks-cluster-role[0].arn
+          AWS = aws_iam_role.cluster.arn
         }
         Action = [
           "kms:Encrypt",
@@ -52,27 +54,44 @@ resource "aws_kms_key" "eks" {
   })
 
   tags = {
-    Name = "${var.cluster-name}-eks-kms"
+    Name = "${var.cluster_name}-kms"
     Env  = var.env
   }
 
   depends_on = [
-    aws_iam_role.eks-nodegroup-role,
-    aws_iam_role.eks-cluster-role
+    aws_iam_role.node_group,
+    aws_iam_role.cluster
   ]
 }
 
-resource "aws_eks_cluster" "eks" {
-  count    = var.is-eks-cluster-enabled == true ? 1 : 0
-  name     = var.cluster-name
-  role_arn = aws_iam_role.eks-cluster-role[count.index].arn
-  version  = var.cluster-version
+resource "aws_kms_alias" "eks" {
+  name          = "alias/${var.cluster_name}-eks"
+  target_key_id = aws_kms_key.eks.key_id
+}
+
+# ─── CloudWatch Log Group ─────────────────────────────────────────────────────
+resource "aws_cloudwatch_log_group" "eks" {
+  name              = "/aws/eks/${var.cluster_name}/cluster"
+  retention_in_days = 90
+  kms_key_id        = aws_kms_key.eks.arn
+
+  tags = {
+    Name = "${var.cluster_name}-logs"
+    Env  = var.env
+  }
+}
+
+# ─── EKS Cluster ─────────────────────────────────────────────────────────────
+resource "aws_eks_cluster" "this" {
+  name     = var.cluster_name
+  role_arn = aws_iam_role.cluster.arn
+  version  = var.cluster_version
 
   vpc_config {
-    subnet_ids              = data.aws_subnets.private_subnets.ids
-    endpoint_private_access = var.endpoint-private-access
-    endpoint_public_access  = var.endpoint-public-access
-    security_group_ids      = [data.aws_security_group.eks-cluster-sg.id]
+    subnet_ids              = data.aws_subnets.private.ids
+    endpoint_private_access = true
+    endpoint_public_access  = false
+    security_group_ids      = [data.aws_security_group.eks.id]
   }
 
   encryption_config {
@@ -82,7 +101,9 @@ resource "aws_eks_cluster" "eks" {
     }
   }
 
-  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  enabled_cluster_log_types = [
+    "api", "audit", "authenticator", "controllerManager", "scheduler"
+  ]
 
   access_config {
     authentication_mode                         = "API_AND_CONFIG_MAP"
@@ -90,62 +111,35 @@ resource "aws_eks_cluster" "eks" {
   }
 
   tags = {
-    Name = var.cluster-name
+    Name = var.cluster_name
+    Env  = var.env
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_policy,
+    aws_cloudwatch_log_group.eks
+  ]
+}
+
+# ─── OIDC Provider (required for IRSA) ───────────────────────────────────────
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.this.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "this" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.this.identity[0].oidc[0].issuer
+
+  tags = {
+    Name = "${var.cluster_name}-oidc"
     Env  = var.env
   }
 }
 
-
-# Data source to get the latest addon version
-data "aws_eks_addon_version" "latest" {
-  for_each           = { for idx, addon in var.addons : idx => addon }
-  addon_name         = each.value.name
-  kubernetes_version = aws_eks_cluster.eks[0].version
-  most_recent        = true
-}
-
-# AddOns for EKS Cluster
-resource "aws_eks_addon" "eks-addons" {
-  for_each                    = { for idx, addon in var.addons : idx => addon }
-  cluster_name                = aws_eks_cluster.eks[0].name
-  addon_name                  = each.value.name
-  addon_version               = data.aws_eks_addon_version.latest[each.key].version
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  timeouts {
-    create = "30m"
-    update = "30m"
-    delete = "30m"
-  }
-
-  depends_on = [
-    aws_eks_node_group.ondemand-node
-  ]
-}
-
-# EBS CSI Driver - separate resource for better control
-resource "aws_eks_addon" "ebs-csi" {
-  cluster_name                = aws_eks_cluster.eks[0].name
-  addon_name                  = "aws-ebs-csi-driver"
-  service_account_role_arn    = aws_iam_role.ebs_csi_driver.arn
-  resolve_conflicts_on_create = "OVERWRITE"
-  resolve_conflicts_on_update = "OVERWRITE"
-
-  timeouts {
-    create = "20m"
-    update = "20m"
-    delete = "10m"
-  }
-
-  depends_on = [
-    aws_eks_node_group.ondemand-node
-  ]
-}
-
-# NodeGroups
-resource "aws_launch_template" "ondemand" {
-  name_prefix = "${var.cluster-name}-ondemand-"
+# ─── Launch Template ──────────────────────────────────────────────────────────
+resource "aws_launch_template" "node" {
+  name_prefix = "${var.cluster_name}-node-"
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -156,44 +150,96 @@ resource "aws_launch_template" "ondemand" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size           = 50
+      volume_size           = var.node_volume_size
       volume_type           = "gp3"
       encrypted             = true
       kms_key_id            = aws_kms_key.eks.arn
       delete_on_termination = true
     }
   }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "${var.cluster_name}-node"
+      Env  = var.env
+    }
+  }
 }
 
-
-resource "aws_eks_node_group" "ondemand-node" {
-  cluster_name    = aws_eks_cluster.eks[0].name
-  node_group_name = "${var.cluster-name}-on-demand-nodes"
-  node_role_arn   = aws_iam_role.eks-nodegroup-role[0].arn
-  subnet_ids      = data.aws_subnets.private_subnets.ids
+# ─── On-Demand Node Group ─────────────────────────────────────────────────────
+resource "aws_eks_node_group" "ondemand" {
+  cluster_name    = aws_eks_cluster.this.name
+  node_group_name = "${var.cluster_name}-ondemand"
+  node_role_arn   = aws_iam_role.node_group.arn
+  subnet_ids      = data.aws_subnets.private.ids
   instance_types  = var.ondemand_instance_types
   capacity_type   = "ON_DEMAND"
 
   scaling_config {
-    desired_size = var.desired_capacity_on_demand
-    min_size     = var.min_capacity_on_demand
-    max_size     = var.max_capacity_on_demand
+    desired_size = var.desired_capacity
+    min_size     = var.min_capacity
+    max_size     = var.max_capacity
   }
 
   launch_template {
-    id      = aws_launch_template.ondemand.id
-    version = aws_launch_template.ondemand.latest_version
+    id      = aws_launch_template.node.id
+    version = aws_launch_template.node.latest_version
   }
 
   update_config {
     max_unavailable = 1
   }
 
-  labels = { type = "ondemand" }
-
-  tags = {
-    "Name" = "${var.cluster-name}-ondemand-nodes"
+  labels = {
+    type = "ondemand"
+    env  = var.env
   }
 
-  depends_on = [aws_eks_cluster.eks]
+  tags = {
+    Name = "${var.cluster_name}-ondemand-nodes"
+    Env  = var.env
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_worker_policy,
+    aws_iam_role_policy_attachment.node_cni_policy,
+    aws_iam_role_policy_attachment.node_ecr_policy
+  ]
+}
+
+# ─── Core EKS Addons ─────────────────────────────────────────────────────────
+resource "aws_eks_addon" "this" {
+  for_each = { for a in var.addons : a.name => a }
+
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = each.value.name
+  addon_version               = try(each.value.version, null)
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
+  }
+
+  depends_on = [aws_eks_node_group.ondemand]
+}
+
+# ─── EBS CSI Driver Addon (with IRSA) ────────────────────────────────────────
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "aws-ebs-csi-driver"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  service_account_role_arn    = aws_iam_role.ebs_csi.arn
+
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "10m"
+  }
+
+  depends_on = [aws_eks_node_group.ondemand]
 }

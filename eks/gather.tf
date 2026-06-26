@@ -1,9 +1,4 @@
-data "aws_eks_cluster" "eks-cluster" {
-  name = "${local.env}-${local.org}-${var.cluster-name}"
-
+data "aws_eks_cluster" "this" {
+  name       = module.eks.cluster_name
   depends_on = [module.eks]
-}
-
-data "aws_eks_cluster_auth" "eks-cluster-auth" {
-  name = "${local.env}-${local.org}-${var.cluster-name}"
 }
