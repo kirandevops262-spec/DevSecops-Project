@@ -1,0 +1,156 @@
+name: Terraform CI/CD with Checkov Security Scan
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+    inputs:
+      module:
+        description: 'Select module to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - vpc-only
+          - eks-only
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.5.0
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # JOB 1 — Checkov Security Scan
+  # Runs on every push, PR, and manual trigger
+  # Blocks all downstream jobs if any check fails
+  # ─────────────────────────────────────────────
+  checkov:
+    name: Checkov Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov scan
+        run: checkov --config-file .checkov.yaml
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-results
+          path: checkov-results.sarif
+          if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────
+  # JOB 2 — Deploy VPC
+  # Runs when:
+  #   - push to main/master  →  module = all or vpc-only
+  #   - manual trigger       →  module = all or vpc-only
+  # VPC is a dependency — always runs before EKS
+  # ─────────────────────────────────────────────
+  terraform-vpc:
+    name: "Terraform VPC Deploy"
+    runs-on: ubuntu-latest
+    needs: checkov
+    if: |
+      needs.checkov.result == 'success' &&
+      (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' &&
+          (github.event.inputs.module == 'all' || github.event.inputs.module == 'vpc-only'))
+      )
+    defaults:
+      run:
+        working-directory: vpc-ec2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=../variables.tfvars -out=vpc.tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve vpc.tfplan
+
+  # ─────────────────────────────────────────────
+  # JOB 3 — Deploy EKS
+  # Runs when:
+  #   - push to main/master  →  always (after VPC)
+  #   - manual trigger       →  module = all (after VPC)
+  #   - manual trigger       →  module = eks-only (skips VPC, runs directly after checkov)
+  # VPC → EKS dependency enforced for 'all' and push
+  # ─────────────────────────────────────────────
+  terraform-eks:
+    name: "Terraform EKS Deploy"
+    runs-on: ubuntu-latest
+    needs: [checkov, terraform-vpc]
+    if: |
+      needs.checkov.result == 'success' &&
+      (
+        needs.terraform-vpc.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.module == 'eks-only')
+      )
+    defaults:
+      run:
+        working-directory: eks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=../variables.tfvars -out=eks.tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve eks.tfplan

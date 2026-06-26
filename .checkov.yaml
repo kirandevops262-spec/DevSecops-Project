@@ -1,0 +1,33 @@
+directory:
+  - eks
+  - vpc-ec2
+  - module
+
+framework:
+  - terraform
+
+check:
+  - CKV_AWS_58   # EKS secrets encryption
+  - CKV_AWS_37   # EKS control plane logging
+  - CKV_AWS_38   # EKS public endpoint disabled or restricted
+  - CKV_AWS_39   # EKS private endpoint enabled
+  - CKV_AWS_74   # EKS node group IMDSv2 (hop limit)
+  - CKV_AWS_8    # EC2 IMDSv2 enforced
+  - CKV_AWS_79   # IMDSv2 on launch template
+  - CKV_AWS_341  # Launch template metadata hop limit = 1
+  - CKV_AWS_111  # IAM no wildcard resource write actions
+  - CKV_AWS_110  # IAM no wildcard resource
+  - CKV_AWS_189  # KMS key rotation enabled
+  - CKV_AWS_7    # KMS key rotation enabled (alias check)
+  - CKV_AWS_25   # Security group no ingress 0.0.0.0/0 on sensitive ports
+  - CKV_AWS_24   # Security group no ingress 22 open to world
+  - CKV2_AWS_5   # Security group attached to resource
+  - CKV_AWS_119  # DynamoDB KMS encryption
+  - CKV2_AWS_62  # S3 event notifications
+  - CKV_AWS_145  # S3 KMS encryption
+  - CKV_AWS_144  # S3 cross-region replication
+  - CKV2_AWS_61  # S3 lifecycle policy
+  - CKV2_AWS_6   # S3 public access block
+
+output: cli
+compact: true
