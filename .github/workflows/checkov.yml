@@ -96,6 +96,23 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
+      - name: Force Unlock VPC State (if locked)
+        continue-on-error: true
+        run: |
+          LOCK_ID=$(aws dynamodb scan \
+            --table-name dev-tarak01-tf-lock \
+            --filter-expression "begins_with(#p, :prefix)" \
+            --expression-attribute-names '{"#p":"Path"}' \
+            --expression-attribute-values '{":prefix":{"S":"dev-tarak01-tf-bucket-terraform/EKS-Terraform/vpc"}}' \
+            --query "Items[0].LockID.S" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$LOCK_ID" ] && [ "$LOCK_ID" != "None" ] && [ "$LOCK_ID" != "null" ]; then
+            echo "Found stale VPC lock: $LOCK_ID — force unlocking"
+            terraform force-unlock -force $LOCK_ID
+          else
+            echo "No stale VPC lock found"
+          fi
+
       - name: Terraform Validate
         run: terraform validate
 
@@ -145,6 +162,23 @@ jobs:
 
       - name: Terraform Init
         run: terraform init
+
+      - name: Force Unlock EKS State (if locked)
+        continue-on-error: true
+        run: |
+          LOCK_ID=$(aws dynamodb scan \
+            --table-name dev-tarak01-tf-lock \
+            --filter-expression "begins_with(#p, :prefix)" \
+            --expression-attribute-names '{"#p":"Path"}' \
+            --expression-attribute-values '{":prefix":{"S":"dev-tarak01-tf-bucket-terraform/EKS-Terraform/eks"}}' \
+            --query "Items[0].LockID.S" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$LOCK_ID" ] && [ "$LOCK_ID" != "None" ] && [ "$LOCK_ID" != "null" ]; then
+            echo "Found stale EKS lock: $LOCK_ID — force unlocking"
+            terraform force-unlock -force $LOCK_ID
+          else
+            echo "No stale EKS lock found"
+          fi
 
       - name: Terraform Validate
         run: terraform validate
