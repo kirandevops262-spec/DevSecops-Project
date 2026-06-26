@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       module:
-        description: 'Select module to deploy'
+        description: 'Select module to deploy/destroy'
         required: true
         default: 'all'
         type: choice
@@ -16,6 +16,9 @@ on:
           - all
           - vpc-only
           - eks-only
+          - destroy-eks
+          - destroy-vpc
+          - destroy-all
 
 env:
   AWS_REGION: us-east-1
@@ -194,3 +197,122 @@ jobs:
 
       - name: Terraform Apply
         run: terraform apply -auto-approve eks.tfplan
+
+  # ─────────────────────────────────────────────
+  # JOB 4 — Destroy EKS
+  # Manual trigger only: destroy-eks or destroy-all
+  # EKS must be destroyed before VPC
+  # ─────────────────────────────────────────────
+  terraform-destroy-eks:
+    name: "Terraform EKS Destroy"
+    runs-on: ubuntu-latest
+    needs: checkov
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.module == 'destroy-eks' || github.event.inputs.module == 'destroy-all')
+    defaults:
+      run:
+        working-directory: eks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.1.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Force Unlock EKS State (if locked)
+        continue-on-error: true
+        run: |
+          STATE_KEY="dev-tarak01-tf-bucket-terraform/EKS-Terraform/eks.tfstate"
+          ITEM=$(aws dynamodb get-item \
+            --table-name dev-tarak01-tf-lock \
+            --region ${{ env.AWS_REGION }} \
+            --key "{\"LockID\": {\"S\": \"$STATE_KEY\"}}" \
+            --output json 2>/dev/null || echo "")
+          if [ -n "$ITEM" ] && [ "$ITEM" != "{}" ]; then
+            echo "Stale EKS lock found — deleting from DynamoDB"
+            aws dynamodb delete-item \
+              --table-name dev-tarak01-tf-lock \
+              --region ${{ env.AWS_REGION }} \
+              --key "{\"LockID\": {\"S\": \"$STATE_KEY\"}}"
+            echo "EKS lock cleared"
+          else
+            echo "No stale EKS lock found"
+          fi
+
+      - name: Terraform Destroy EKS
+        run: terraform destroy -auto-approve -var-file=../variables.tfvars
+
+  # ─────────────────────────────────────────────
+  # JOB 5 — Destroy VPC
+  # Manual trigger only: destroy-vpc or destroy-all
+  # For destroy-all: waits for EKS destroy to finish first
+  # ─────────────────────────────────────────────
+  terraform-destroy-vpc:
+    name: "Terraform VPC Destroy"
+    runs-on: ubuntu-latest
+    needs: [checkov, terraform-destroy-eks]
+    if: |
+      always() &&
+      needs.checkov.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.module == 'destroy-vpc' || github.event.inputs.module == 'destroy-all') &&
+      (needs.terraform-destroy-eks.result == 'success' || needs.terraform-destroy-eks.result == 'skipped')
+    defaults:
+      run:
+        working-directory: vpc-ec2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.1.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Force Unlock VPC State (if locked)
+        continue-on-error: true
+        run: |
+          STATE_KEY="dev-tarak01-tf-bucket-terraform/EKS-Terraform/vpc.tfstate"
+          ITEM=$(aws dynamodb get-item \
+            --table-name dev-tarak01-tf-lock \
+            --region ${{ env.AWS_REGION }} \
+            --key "{\"LockID\": {\"S\": \"$STATE_KEY\"}}" \
+            --output json 2>/dev/null || echo "")
+          if [ -n "$ITEM" ] && [ "$ITEM" != "{}" ]; then
+            echo "Stale VPC lock found — deleting from DynamoDB"
+            aws dynamodb delete-item \
+              --table-name dev-tarak01-tf-lock \
+              --region ${{ env.AWS_REGION }} \
+              --key "{\"LockID\": {\"S\": \"$STATE_KEY\"}}"
+            echo "VPC lock cleared"
+          else
+            echo "No stale VPC lock found"
+          fi
+
+      - name: Terraform Destroy VPC
+        run: terraform destroy -auto-approve -var-file=../variables.tfvars
