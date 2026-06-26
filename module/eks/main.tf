@@ -165,6 +165,7 @@ resource "aws_launch_template" "ondemand" {
   }
 }
 
+
 resource "aws_eks_node_group" "ondemand-node" {
   cluster_name    = aws_eks_cluster.eks[0].name
   node_group_name = "${var.cluster-name}-on-demand-nodes"
