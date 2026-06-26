@@ -1,12 +1,65 @@
+data "aws_caller_identity" "current" {}
+
 resource "aws_kms_key" "eks" {
   description             = "EKS secrets encryption key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
 
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EnableRootAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowEKSNodeGroupEBS"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.eks-nodegroup-role[0].arn
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey",
+          "kms:CreateGrant"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowEKSClusterSecrets"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.eks-cluster-role[0].arn
+        }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
   tags = {
     Name = "${var.cluster-name}-eks-kms"
     Env  = var.env
   }
+
+  depends_on = [
+    aws_iam_role.eks-nodegroup-role,
+    aws_iam_role.eks-cluster-role
+  ]
 }
 
 resource "aws_eks_cluster" "eks" {
